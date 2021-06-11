@@ -42,7 +42,7 @@ public class TopicWorkerCoordinate {
     @Autowired
     Redisson redisson;
 
-    //每台服务维护属于本机的topic,而不是1个topic分散再多个服务器上。
+    //@Junit
     private List<String> workIp = new ArrayList<String>() {
         {
             add("127.0.0.1:8080");
