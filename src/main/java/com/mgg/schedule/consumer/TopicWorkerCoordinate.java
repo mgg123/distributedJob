@@ -4,7 +4,6 @@ package com.mgg.schedule.consumer;
 import com.mgg.schedule.enums.TopicEnum;
 import com.mgg.schedule.message.Work;
 import com.mgg.schedule.zookeeper.ChildListener;
-import com.mgg.schedule.zookeeper.EventType;
 import com.mgg.schedule.zookeeper.curator.CuratorZookeeperClient;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 import org.redisson.Redisson;
@@ -12,10 +11,8 @@ import org.redisson.api.RScoredSortedSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import javax.annotation.security.RunAs;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -34,7 +31,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * |127:8080_1|   |127:8081_1|
  * |slot1,slot2|  |slot3,slot4|
  */
-@Component
+//@Component
 public class TopicWorkerCoordinate {
 
     private static final Logger log = LoggerFactory.getLogger(TopicWorkerCoordinate.class);
