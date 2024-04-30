@@ -5,23 +5,22 @@ import cn.hutool.json.JSONUtil;
 import com.mgg.distributedJob.enums.TopicEnum;
 import com.mgg.distributedJob.message.Work;
 import com.mgg.distributedJob.topic.TopicManager;
-import com.mgg.distributedJob.zookeeper.ChildListener;
-import com.mgg.distributedJob.zookeeper.DataListener;
 import com.mgg.distributedJob.zookeeper.EventType;
 import com.mgg.distributedJob.zookeeper.curator.CuratorZookeeperClient;
-import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 import org.redisson.Redisson;
 import org.redisson.api.RScoredSortedSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -38,8 +37,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * |127:8080_1|   |127:8081_1|
  * |slot1,slot2|  |slot3,slot4|
  */
-@Component
-@ConditionalOnBean(value = TopicManager.class)
+@Configuration
+@ConditionalOnBean(TopicManager.class)
+@DependsOn(value = {"topicManager"})
 public class TopicWorkerRegister {
 
     private static final Logger log = LoggerFactory.getLogger(TopicWorkerRegister.class);
@@ -111,6 +111,13 @@ public class TopicWorkerRegister {
 
     private void publishWorker2Zookeepr() {
         //假设每台机器启动4个线程也就是启动4个worker
+
+        //先上报workIp,然后分别启动work,再上报workId
+        for(String topic : TopicEnum.getTopics()) {
+            String workIpPath = String.format("/%s/%s",topic,workIp.get(0));
+            curatorZookeeperClient.create(workIpPath,false);
+        }
+
         for(int i = 0; i < 4; i++) {
             String workerName = String.format("local_thread_%s",i);
             Thread thread = new Thread(new Worker(workerName,TopicEnum.getTopics(),workIp.get(0),curatorZookeeperClient), workerName);
@@ -136,15 +143,21 @@ public class TopicWorkerRegister {
             this.client = client;
             this.topics = topics;
             for(String topic : topics) {
-                String path = String.format("/%s/%s/%s",topic,workIp,name);
-                client.createGenericDataListener(path, (path1, value, eventType) -> {
+                String workIdPath = String.format("/%s/%s/%s",topic,workIp,name);
+                log.info("Worker create topic:{},workIdPath:{},workIp:{}",topic,workIdPath,workIp);
+                client.create(workIdPath,true);
+                client.createGenericDataListener(workIdPath, (path1, value, eventType) -> {
                     if(eventType == EventType.NodeDataChanged) {
                         //slotKey更新。
-                        workSlotKeys = JSONUtil.toList(value.toString(),String.class);
-                        notifyAll();
+                        this.workSlotKeys = JSONUtil.toList(value.toString(),String.class);
+                        Runnable work = pathWorkMap.get(path1);
+                        if(work != null) {
+                            work.notifyAll();
+                        }
+
                     }
                 });
-                pathWorkMap.putIfAbsent(path,this);
+                pathWorkMap.putIfAbsent(workIdPath,this);
             }
         }
 
@@ -152,15 +165,29 @@ public class TopicWorkerRegister {
         public void run() {
             for(;;) {
                 //如果worker没有分配到slot
+                log.info("worker pull slotKey,slotKey:{},thread:{},this:{}",workSlotKeys,Thread.currentThread().getName(),this);
                 if(workSlotKeys.isEmpty()) {
-                    try {
-                        Thread.currentThread().wait(300000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
+                    synchronized (this) {
+                        try {
+                            this.wait(300000);
+                            log.info("worker ready end:{}",Thread.currentThread().getName());
+                            break;
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        } catch (Exception e) {
+                            log.error("Thread wait error:{}",e);
+                        } finally {
+                            for(String topic: topics) {
+                                String workIdPath = String.format("/%s/%s/%s",topic,workIp.get(0),name);
+                                client.deletePath(workIdPath);
+                            }
+                        }
                     }
                 } else {
                     //
-                    for(String slot : workSlotKeys) {
+                    Iterator<String> iterator = workSlotKeys.iterator();
+                    while (iterator.hasNext()) {
+                        String slot = iterator.next();
                         //获取过期任务
                         RScoredSortedSet<Work> rs = redisson.getScoredSortedSet(slot);
                         Collection<Work> works = rs.valueRange(0d,true,Double.valueOf(String.valueOf(System.currentTimeMillis())),false);
@@ -172,41 +199,9 @@ public class TopicWorkerRegister {
 
                         }
                     }
-
                 }
             }
         }
-    }
-
-    private class SlotRegister implements ChildListener {
-        @Override
-        public void childChanged(String path, String data, PathChildrenCacheEvent.Type eventType) {
-
-            //若某topic下新增消费者机器、
-            if (eventType.equals(PathChildrenCacheEvent.Type.CHILD_ADDED)) {
-
-            }
-
-
-            //
-
-
-        }
-
-
-//        @Override
-//        public void childChanged(String path, String data, PathChildrenCacheEvent.Type eventType) {
-//
-//            //监听/#{topic}/ip/路径下有新增，那么唤醒对应worker
-//            if (eventType.equals(PathChildrenCacheEvent.Type.CHILD_ADDED)) {
-//                path = path.substring(path.lastIndexOf("/"),path.length());
-//                Thread notifyThread = workerBlock.get(path);
-//                if (notifyThread != null) {
-//                    notifyThread.notifyAll();
-//                }
-//            }
-//
-//        }
     }
 
 }

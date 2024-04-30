@@ -7,8 +7,10 @@ import com.mgg.distributedJob.zookeeper.ChildListener;
 import com.mgg.distributedJob.zookeeper.curator.CuratorZookeeperClient;
 import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DependsOn;
 
 import javax.annotation.PostConstruct;
 import java.util.ArrayList;
@@ -20,8 +22,9 @@ import java.util.stream.Collectors;
 /**
  * 整体topic的管理
  */
-@Component
-@ConditionalOnBean(value = CuratorZookeeperClient.class)
+@Configuration(value = "topicManager")
+@ConditionalOnBean(CuratorZookeeperClient.class)
+@DependsOn(value = {"curatorZookeeperClient"})
 public class TopicManager {
 
     /**
@@ -77,7 +80,7 @@ public class TopicManager {
         for (TopicEnum topicEnum : TopicEnum.values()) {
             ConcurrentHashSet concurrentHashSet = topicSlotKeyMap.getOrDefault(String.format("/%s",topicEnum.getTopic()),new ConcurrentHashSet<>());
             for (int i = 0; i < topicEnum.getSlotNum(); i++) {
-                concurrentHashSet.add(topicEnum.getSlot().get(0));
+                concurrentHashSet.add(topicEnum.getSlot().get(i));
             }
             topicSlotKeyMap.put(String.format("/%s",topicEnum.getTopic()),concurrentHashSet);
         }
@@ -134,29 +137,69 @@ public class TopicManager {
             //获取未分配的slotKey进行分配。目前第一版不做再分配（从已分配的slotKey重新hash后再分配）
             if (eventType.equals(PathChildrenCacheEvent.Type.CHILD_ADDED)) {
                 //命中的topic; path = /topic/{ip}
-                String topic = path.substring(path.lastIndexOf("/",1));
+                String topic = path.substring(0,path.lastIndexOf("/"));
                 //获取workIp;
-                ConcurrentHashSet<String> workIps = topicIpMap.getOrDefault(topic,new ConcurrentHashSet<>());
+                ConcurrentHashSet<String> workIps;
+                if(topicIpMap.containsKey(topic)) {
+                    workIps = topicIpMap.get(topic);
+                } else {
+                    workIps = new ConcurrentHashSet<>();
+                    topicIpMap.put(topic,workIps);
+                    curatorZookeeperClient.addChildListener(path,new workIdChange());
+                }
                 //添加新上报的workIp;
                 workIps.add(path);
-                //获取上报ip下面的workId
-                List<String> workIds = curatorZookeeperClient.getChildren(path);
-                ConcurrentHashSet<String> ipWorkIds = ipWorkIdsMap.getOrDefault(path,new ConcurrentHashSet<>());
-                //workIds -> thread_1, thread_2
-                for(String workId : workIds) {
-                    workId = String.format("%s/%s",path,workId);
-                    ipWorkIds.add(workId);
-                }
             } else if(eventType.equals(PathChildrenCacheEvent.Type.CHILD_REMOVED)) {
                 //path = /topic/{ip} -> {workIds} -> {slotKeys}
-                //重新再分配slotKeys;
+
 
             } else if(eventType.equals(PathChildrenCacheEvent.Type.CHILD_UPDATED)) {
-                //
+                //path = /
+
             }
         }
     }
 
+
+    private class workIdChange implements ChildListener {
+
+        @Override
+        public void childChanged(String path, String data, PathChildrenCacheEvent.Type eventType) {
+            //path -> /topic/workIp/workId
+
+            if (eventType.equals(PathChildrenCacheEvent.Type.CHILD_ADDED)) {
+                //命中的topic; path = /topic/{ip}/workId
+                String topic = path.substring(0,path.lastIndexOf("/",1));
+                String workIp = path.substring(0,path.lastIndexOf("/"));
+                ConcurrentHashSet<String> ipWorkIds;
+                if(ipWorkIdsMap.containsKey(workIp)) {
+                    ipWorkIds = ipWorkIdsMap.get(workIp);
+                } else {
+                    ipWorkIds = new ConcurrentHashSet<>();
+                    ipWorkIdsMap.put(workIp,ipWorkIds);
+                }
+                //workIds -> thread_1, thread_2
+                ipWorkIds.add(path);
+            } else if(eventType.equals(PathChildrenCacheEvent.Type.CHILD_REMOVED)) {
+                //path = /topic/{ip} -> {workIds} -> {slotKeys}
+
+
+            } else if(eventType.equals(PathChildrenCacheEvent.Type.CHILD_UPDATED)) {
+                //path = /
+
+            }
+
+        }
+    }
+
+
+
+
+    public static void main(String[] args) {
+        String path = "/mgg_topic/127.0.0.1:8080";
+        String topic = path.substring(0,path.lastIndexOf("/"));
+        System.out.println(topic);
+    }
 
 
 }

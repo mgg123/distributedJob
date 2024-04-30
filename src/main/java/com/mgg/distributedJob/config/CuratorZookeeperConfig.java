@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 public class CuratorZookeeperConfig {
 
 
-    @Bean
+    @Bean("curatorZookeeperClient")
     public CuratorZookeeperClient getCuratorZookeeperClient()
     {
         return new CuratorZookeeperClient("127.0.0.1:2181");

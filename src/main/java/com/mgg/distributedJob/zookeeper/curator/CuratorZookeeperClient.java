@@ -287,8 +287,9 @@ public class CuratorZookeeperClient extends AbstractZookeeperClient<CuratorZooke
                 logger.info("修改子节点路径:" + event.getData().getPath());
                 logger.info("修改子节点数据:" + new String(event.getData().getData()));
             }
-            childListener.childChanged(event.getData().getPath(),
-                    event.getData().getData() != null ? new String(event.getData().getData()) : null, event.getType());
+            if(event.getData() != null) {
+                childListener.childChanged(event.getData().getPath(),new String(event.getData().getData()), event.getType());
+            }
         }
     }
 
